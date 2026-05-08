@@ -10,13 +10,13 @@ from googleapiclient.discovery import build
 # =========================
 # CONFIG
 # =========================
-API_KEY = "AIzaSyBa8nj7q6VAVd9j1b9uL1CTTom5omIBFNo"
+API_KEY = "Your_API"
 
 DB_CONFIG = {
     "host": "localhost",
     "database": "YouTube_Data",
     "user": "postgres",
-    "password": "Ironblooded2319!"
+    "password": "YOUR_PW"
 }
 
 YOUTUBE = build("youtube", "v3", developerKey=API_KEY)
