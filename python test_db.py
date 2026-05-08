@@ -5,7 +5,7 @@ try:
         host="localhost",
         database="YouTube_Data",
         user="postgres",
-        password="Cheese123"
+        password="YOUR_PW"
     )
     print("Connected successfully!")
     conn.close()
