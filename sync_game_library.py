@@ -4,7 +4,7 @@ DB_CONFIG = {
     "host": "localhost",
     "database": "YouTube_Data",
     "user": "postgres",
-    "password": "Cheese123"
+    "password": "YOUR_PW"
 }
 
 GAME_LIBRARY = {
