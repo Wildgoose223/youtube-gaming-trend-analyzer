@@ -1,17 +1,24 @@
 import os
 import json
+from datetime import datetime
+
 import psycopg2
 from dotenv import load_dotenv
+
+
+# =========================
+# LOAD ENV VARIABLES
+# =========================
+load_dotenv()
+
 
 # =========================
 # CONFIG
 # =========================
-load_dotenv()
-
 DB_CONFIG = {
-    "host": "localhost",
-    "database": "YouTube_Data",
-    "user": "postgres",
+    "host": os.getenv("DB_HOST"),
+    "database": os.getenv("DB_NAME"),
+    "user": os.getenv("DB_USER"),
     "password": os.getenv("DB_PASSWORD")
 }
 
@@ -19,25 +26,12 @@ if not DB_CONFIG["password"]:
     raise ValueError("Missing DB_PASSWORD in .env file")
 
 
+# =========================
+# FETCH DASHBOARD DATA
+# =========================
 def fetch_dashboard_data():
     conn = psycopg2.connect(**DB_CONFIG)
     cursor = conn.cursor()
-
-    cursor.execute("SELECT MAX(run_time) FROM trending_games;")
-    latest_run = cursor.fetchone()[0]
-
-    if latest_run is None:
-        cursor.close()
-        conn.close()
-        return None
-
-    cursor.execute("""
-        SELECT game_name, mentions, total_videos, percentage
-        FROM trending_games
-        WHERE run_time = %s
-        ORDER BY mentions DESC;
-    """, (latest_run,))
-    current_games = cursor.fetchall()
 
     cursor.execute("""
         SELECT DISTINCT run_time
@@ -45,496 +39,387 @@ def fetch_dashboard_data():
         ORDER BY run_time DESC
         LIMIT 2;
     """)
+
     runs = cursor.fetchall()
+
+    if not runs:
+        cursor.close()
+        conn.close()
+        return []
+
+    current_run = runs[0][0]
     previous_run = runs[1][0] if len(runs) > 1 else None
 
-    current_with_change = []
-
-    for game_name, mentions, total_videos, percentage in current_games:
-        previous_mentions = 0
-
-        if previous_run:
-            cursor.execute("""
-                SELECT mentions
-                FROM trending_games
-                WHERE run_time = %s
-                AND game_name = %s;
-            """, (previous_run, game_name))
-
-            result = cursor.fetchone()
-            if result:
-                previous_mentions = result[0]
-
-        change = mentions - previous_mentions
-
-        current_with_change.append({
-            "game_name": game_name,
-            "mentions": mentions,
-            "total_videos": total_videos,
-            "percentage": percentage,
-            "previous_mentions": previous_mentions,
-            "change": change
-        })
-
     cursor.execute("""
-        SELECT 
-            game_name,
-            SUM(mentions) AS total_appearances,
-            COUNT(*) AS times_detected
-        FROM trending_games
-        WHERE DATE(run_time) = CURRENT_DATE
-        GROUP BY game_name
-        ORDER BY total_appearances DESC
+        SELECT
+            current.game_name,
+            current.mentions,
+            current.total_videos,
+            current.percentage,
+            COALESCE(previous.mentions, 0) AS previous_mentions,
+            current.mentions - COALESCE(previous.mentions, 0) AS change,
+            current.rawg_name,
+            current.released,
+            current.rating,
+            current.metacritic,
+            current.platforms,
+            current.genres,
+            current.background_image
+        FROM trending_games current
+        LEFT JOIN trending_games previous
+            ON current.game_name = previous.game_name
+            AND previous.run_time = %s
+        WHERE current.run_time = %s
+        ORDER BY current.mentions DESC
         LIMIT 10;
-    """)
-    top_today = cursor.fetchall()
+    """, (previous_run, current_run))
 
-    total_videos = current_games[0][2] if current_games else 0
-    recognized_games = len(current_games)
-    total_appearances = sum(row[1] for row in current_games)
-
-    detection_rate = 0
-    if total_videos:
-        detection_rate = round((total_appearances / total_videos) * 100, 2)
-
-    cursor.execute("""
-        SELECT term, count
-        FROM unknown_terms
-        ORDER BY count DESC, last_seen DESC
-        LIMIT 10;
-    """)
-    unknown_terms = cursor.fetchall()
-
-    cursor.execute("""
-        SELECT game_name
-        FROM trending_games
-        WHERE DATE(run_time) = CURRENT_DATE
-        GROUP BY game_name
-        ORDER BY SUM(mentions) DESC
-        LIMIT 10;
-    """)
-    chart_games = [row[0] for row in cursor.fetchall()]
-
-    if chart_games:
-        cursor.execute("""
-            SELECT run_time, game_name, mentions
-            FROM trending_games
-            WHERE DATE(run_time) = CURRENT_DATE
-            AND game_name = ANY(%s)
-            ORDER BY run_time ASC, game_name ASC;
-        """, (chart_games,))
-        chart_rows = cursor.fetchall()
-    else:
-        chart_rows = []
-
-    chart_data = [
-        {
-            "run_time": row[0].strftime("%I:%M %p"),
-            "game_name": row[1],
-            "mentions": row[2]
-        }
-        for row in chart_rows
-    ]
+    rows = cursor.fetchall()
 
     cursor.close()
     conn.close()
 
-    return {
-        "latest_run": latest_run,
-        "current_games": current_with_change,
-        "top_today": top_today,
-        "recognized_games": recognized_games,
-        "total_videos": total_videos,
-        "total_appearances": total_appearances,
-        "detection_rate": detection_rate,
-        "unknown_terms": unknown_terms,
-        "chart_data": chart_data
-    }
+    dashboard_data = []
+
+    for row in rows:
+        (
+            game_name,
+            mentions,
+            total_videos,
+            percentage,
+            previous_mentions,
+            change,
+            rawg_name,
+            released,
+            rating,
+            metacritic,
+            platforms,
+            genres,
+            background_image
+        ) = row
+
+        if change > 0:
+            trend_label = "Trending Up"
+        elif change < 0:
+            trend_label = "Declining"
+        else:
+            trend_label = "Stable"
+
+        dashboard_data.append({
+            "game_name": game_name,
+            "display_name": rawg_name or game_name,
+            "mentions": mentions,
+            "total_videos": total_videos,
+            "percentage": percentage,
+            "previous_mentions": previous_mentions,
+            "change": change,
+            "trend_label": trend_label,
+            "released": str(released) if released else "Unknown",
+            "rating": rating if rating is not None else "N/A",
+            "metacritic": metacritic if metacritic is not None else "N/A",
+            "platforms": platforms or "Unknown",
+            "genres": genres or "Unknown",
+            "background_image": background_image or ""
+        })
+
+    return dashboard_data
 
 
-def trend_label(change):
-    if change > 0:
-        return "Trending Up"
-    if change < 0:
-        return "Trending Down"
-    return "Stable"
-
-
-def trend_class(change):
-    if change > 0:
-        return "up"
-    if change < 0:
-        return "down"
-    return "stable"
-
-
+# =========================
+# GENERATE HTML
+# =========================
 def generate_dashboard():
     data = fetch_dashboard_data()
 
-    if data is None:
-        html = """
-        <html>
-        <head><title>YouTube Gaming Trend Dashboard</title></head>
-        <body>
-            <h1>YouTube Gaming Trend Dashboard</h1>
-            <p>No trend data found yet. Run the collector script first.</p>
-        </body>
-        </html>
+    chart_labels = [item["display_name"] for item in data]
+    chart_values = [item["mentions"] for item in data]
+
+    cards_html = ""
+
+    for rank, item in enumerate(data, start=1):
+        image_html = ""
+
+        if item["background_image"]:
+            image_html = f"""
+            <img class="game-image" src="{item["background_image"]}" alt="{item["display_name"]}">
+            """
+
+        cards_html += f"""
+        <div class="game-card">
+            {image_html}
+
+            <div class="game-content">
+                <div class="rank">#{rank}</div>
+
+                <h2>{item["display_name"]}</h2>
+
+                <p class="subtitle">
+                    Matched as: <strong>{item["game_name"]}</strong>
+                </p>
+
+                <div class="stats">
+                    <div>
+                        <span class="stat-value">{item["mentions"]}</span>
+                        <span class="stat-label">Mentions</span>
+                    </div>
+
+                    <div>
+                        <span class="stat-value">{item["percentage"]}%</span>
+                        <span class="stat-label">Share</span>
+                    </div>
+
+                    <div>
+                        <span class="stat-value">{item["change"]}</span>
+                        <span class="stat-label">Change</span>
+                    </div>
+                </div>
+
+                <p class="trend {item["trend_label"].replace(" ", "-").lower()}">
+                    {item["trend_label"]}
+                </p>
+
+                <div class="metadata">
+                    <p><strong>Platforms:</strong> {item["platforms"]}</p>
+                    <p><strong>Genres:</strong> {item["genres"]}</p>
+                    <p><strong>Released:</strong> {item["released"]}</p>
+                    <p><strong>RAWG Rating:</strong> {item["rating"]}</p>
+                    <p><strong>Metacritic:</strong> {item["metacritic"]}</p>
+                </div>
+            </div>
+        </div>
         """
-
-        with open("dashboard.html", "w", encoding="utf-8") as file:
-            file.write(html)
-
-        print("Dashboard created, but no data was found.")
-        return
-
-    current_rows = ""
-
-    for rank, game in enumerate(data["current_games"], start=1):
-        change = game["change"]
-        change_text = f"+{change}" if change > 0 else str(change)
-
-        current_rows += f"""
-        <tr>
-            <td>{rank}</td>
-            <td>{game["game_name"]}</td>
-            <td>Appears in {game["mentions"]} of {game["total_videos"]} trending videos</td>
-            <td>{game["previous_mentions"]}</td>
-            <td class="{trend_class(change)}">{change_text}</td>
-            <td>{game["percentage"]}%</td>
-            <td class="{trend_class(change)}">{trend_label(change)}</td>
-        </tr>
-        """
-
-    today_rows = ""
-
-    for rank, row in enumerate(data["top_today"], start=1):
-        game_name, total_appearances, times_detected = row
-
-        today_rows += f"""
-        <tr>
-            <td>{rank}</td>
-            <td>{game_name}</td>
-            <td>{total_appearances}</td>
-            <td>{times_detected}</td>
-        </tr>
-        """
-
-    unknown_rows = ""
-
-    for term, count in data["unknown_terms"]:
-        unknown_rows += f"""
-        <tr>
-            <td>{term}</td>
-            <td>{count}</td>
-        </tr>
-        """
-
-    top_game = data["top_today"][0][0] if data["top_today"] else "No data"
-    top_game_total = data["top_today"][0][1] if data["top_today"] else 0
-    chart_json = json.dumps(data["chart_data"])
 
     html = f"""
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <title>YouTube Gaming Trend Dashboard</title>
-        <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Project2026 Gaming Trend Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
-        <style>
-            body {{
-                font-family: Arial, sans-serif;
-                background-color: #f4f6f8;
-                margin: 0;
-                padding: 30px;
-                color: #222;
-            }}
+    <style>
+        body {{
+            margin: 0;
+            font-family: Arial, sans-serif;
+            background: #0f172a;
+            color: #e5e7eb;
+        }}
 
-            .container {{
-                max-width: 1250px;
-                margin: auto;
-            }}
+        header {{
+            padding: 32px;
+            text-align: center;
+            background: #111827;
+            border-bottom: 1px solid #334155;
+        }}
 
-            h1 {{
-                margin-bottom: 5px;
-            }}
+        header h1 {{
+            margin: 0;
+            font-size: 36px;
+        }}
 
-            .subtitle {{
-                color: #555;
-                margin-bottom: 25px;
-                font-size: 16px;
-            }}
+        header p {{
+            color: #94a3b8;
+            margin-top: 8px;
+        }}
 
-            .explain, .chart-card {{
-                background: white;
-                padding: 20px;
-                border-radius: 12px;
-                box-shadow: 0 2px 8px rgba(0,0,0,0.08);
-                margin-bottom: 25px;
-                line-height: 1.6;
-            }}
+        .container {{
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 32px;
+        }}
 
-            .cards {{
-                display: grid;
-                grid-template-columns: repeat(4, 1fr);
-                gap: 15px;
-                margin-bottom: 30px;
-            }}
+        .chart-section {{
+            background: #111827;
+            padding: 24px;
+            border-radius: 16px;
+            margin-bottom: 32px;
+            border: 1px solid #334155;
+        }}
 
-            .card {{
-                background: white;
-                padding: 20px;
-                border-radius: 12px;
-                box-shadow: 0 2px 8px rgba(0,0,0,0.08);
-            }}
+        .grid {{
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(330px, 1fr));
+            gap: 24px;
+        }}
 
-            .card h2 {{
-                font-size: 15px;
-                color: #555;
-                margin-bottom: 10px;
-            }}
+        .game-card {{
+            background: #111827;
+            border: 1px solid #334155;
+            border-radius: 18px;
+            overflow: hidden;
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.25);
+        }}
 
-            .big {{
-                font-size: 26px;
-                font-weight: bold;
-            }}
+        .game-image {{
+            width: 100%;
+            height: 180px;
+            object-fit: cover;
+            display: block;
+        }}
 
-            table {{
-                width: 100%;
-                border-collapse: collapse;
-                background: white;
-                border-radius: 12px;
-                overflow: hidden;
-                box-shadow: 0 2px 8px rgba(0,0,0,0.08);
-                margin-bottom: 30px;
-            }}
+        .game-content {{
+            padding: 20px;
+        }}
 
-            th, td {{
-                padding: 14px;
-                text-align: left;
-                border-bottom: 1px solid #eee;
-            }}
+        .rank {{
+            color: #38bdf8;
+            font-weight: bold;
+            font-size: 18px;
+        }}
 
-            th {{
-                background-color: #222;
-                color: white;
-            }}
+        h2 {{
+            margin: 8px 0;
+            font-size: 24px;
+        }}
 
-            .up {{
-                color: green;
-                font-weight: bold;
-            }}
+        .subtitle {{
+            color: #94a3b8;
+            font-size: 14px;
+        }}
 
-            .down {{
-                color: red;
-                font-weight: bold;
-            }}
+        .stats {{
+            display: flex;
+            justify-content: space-between;
+            margin: 20px 0;
+            gap: 12px;
+        }}
 
-            .stable {{
-                color: #777;
-                font-weight: bold;
-            }}
+        .stats div {{
+            background: #1e293b;
+            padding: 12px;
+            border-radius: 12px;
+            text-align: center;
+            flex: 1;
+        }}
 
-            .section-note {{
-                color: #555;
-                margin-top: -10px;
-                margin-bottom: 12px;
-            }}
+        .stat-value {{
+            display: block;
+            font-size: 22px;
+            font-weight: bold;
+        }}
 
-            .footer {{
-                color: #666;
-                font-size: 14px;
-                margin-top: 25px;
-            }}
+        .stat-label {{
+            display: block;
+            color: #94a3b8;
+            font-size: 12px;
+            margin-top: 4px;
+        }}
 
-            canvas {{
-                max-height: 420px;
-            }}
-        </style>
-    </head>
+        .trend {{
+            display: inline-block;
+            padding: 8px 12px;
+            border-radius: 999px;
+            font-weight: bold;
+            font-size: 13px;
+        }}
 
-    <body>
-        <div class="container">
-            <h1>YouTube Gaming Trend Dashboard</h1>
-            <p class="subtitle">
-                A PostgreSQL-backed dashboard that tracks which games appear in trending YouTube gaming video titles.
-            </p>
+        .trending-up {{
+            background: #064e3b;
+            color: #6ee7b7;
+        }}
 
-            <div class="explain">
-                <strong>How to read this dashboard:</strong><br>
-                Each update scans the top trending YouTube gaming videos in the US.
-                If a known game title or alias appears in a video title, it counts as one appearance.
-                For example, if Roblox appears in 4 out of 25 trending video titles, it is shown as
-                “Appears in 4 of 25 trending videos.”
-                <br><br>
-                The change column compares the latest update against the previous update, similar to a stock page.
-                Higher appearances mean the game is showing up more often in trending gaming content.
-            </div>
+        .declining {{
+            background: #7f1d1d;
+            color: #fecaca;
+        }}
 
-            <div class="cards">
-                <div class="card">
-                    <h2>Top Game Today</h2>
-                    <div class="big">{top_game}</div>
-                    <p>{top_game_total} total appearances today</p>
-                </div>
+        .stable {{
+            background: #334155;
+            color: #cbd5e1;
+        }}
 
-                <div class="card">
-                    <h2>Recognized Games</h2>
-                    <div class="big">{data["recognized_games"]}</div>
-                    <p>Games detected in latest pull</p>
-                </div>
+        .metadata {{
+            margin-top: 18px;
+            font-size: 14px;
+            color: #cbd5e1;
+            line-height: 1.5;
+        }}
 
-                <div class="card">
-                    <h2>Detection Rate</h2>
-                    <div class="big">{data["detection_rate"]}%</div>
-                    <p>{data["total_appearances"]} appearances across {data["total_videos"]} videos</p>
-                </div>
+        .metadata p {{
+            margin: 8px 0;
+        }}
 
-                <div class="card">
-                    <h2>Last Updated</h2>
-                    <div class="big">{data["latest_run"].strftime("%I:%M %p")}</div>
-                    <p>{data["latest_run"].strftime("%Y-%m-%d")}</p>
-                </div>
-            </div>
+        footer {{
+            text-align: center;
+            color: #64748b;
+            padding: 24px;
+            font-size: 13px;
+        }}
+    </style>
+</head>
 
-            <h2>Game Trend Over Time</h2>
-            <p class="section-note">
-                This line chart shows how often the top games appeared across each data pull today.
-                It works like a stock chart, but tracks game appearances instead of prices.
-            </p>
+<body>
+    <header>
+        <h1>Project2026 Gaming Trend Dashboard</h1>
+        <p>Top 10 trending games from YouTube Gaming, enriched with RAWG metadata</p>
+        <p>Last updated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}</p>
+    </header>
 
-            <div class="chart-card">
-                <canvas id="trendChart"></canvas>
-            </div>
+    <div class="container">
+        <section class="chart-section">
+            <canvas id="trendChart"></canvas>
+        </section>
 
-            <h2>Recognized Games in Latest Pull</h2>
-            <p class="section-note">
-                These are games from the trusted game library that appeared in the latest YouTube trending pull.
-            </p>
+        <section class="grid">
+            {cards_html}
+        </section>
+    </div>
 
-            <table>
-                <tr>
-                    <th>Rank</th>
-                    <th>Game</th>
-                    <th>Current Appearance Count</th>
-                    <th>Previous Count</th>
-                    <th>Change Since Last Update</th>
-                    <th>Share of Trending Videos</th>
-                    <th>Trend</th>
-                </tr>
-                {current_rows}
-            </table>
+    <footer>
+        Project2026 | YouTube Data API + PostgreSQL + RAWG
+    </footer>
 
-            <h2>Top Games Today</h2>
-            <p class="section-note">
-                This combines all pulls from today instead of only showing the latest snapshot.
-            </p>
+    <script>
+        const labels = {json.dumps(chart_labels)};
+        const values = {json.dumps(chart_values)};
 
-            <table>
-                <tr>
-                    <th>Rank</th>
-                    <th>Game</th>
-                    <th>Total Appearances Today</th>
-                    <th>Times Detected Today</th>
-                </tr>
-                {today_rows}
-            </table>
+        const ctx = document.getElementById('trendChart');
 
-            <h2>Possible Unmatched Trends</h2>
-            <p class="section-note">
-                These are repeated terms found in trending titles that are not currently confirmed as games in the trusted library.
-                They can help identify new games, slang, DLC names, or missing aliases.
-            </p>
-
-            <table>
-                <tr>
-                    <th>Unknown Term</th>
-                    <th>Times Seen</th>
-                </tr>
-                {unknown_rows}
-            </table>
-
-            <p class="footer">
-                Dashboard generated from PostgreSQL trend data. This is version 1.0 of Project2026.
-            </p>
-        </div>
-
-        <script>
-            const chartData = {chart_json};
-
-            const labels = [...new Set(chartData.map(item => item.run_time))];
-            const games = [...new Set(chartData.map(item => item.game_name))];
-
-            const colorList = [
-                "#2563eb", "#dc2626", "#16a34a", "#9333ea", "#ea580c",
-                "#0891b2", "#ca8a04", "#4f46e5", "#be123c", "#15803d"
-            ];
-
-            const datasets = games.map((game, index) => {{
-                return {{
-                    label: game,
-                    data: labels.map(time => {{
-                        const found = chartData.find(item => item.run_time === time && item.game_name === game);
-                        return found ? found.mentions : 0;
-                    }}),
-                    borderColor: colorList[index % colorList.length],
-                    backgroundColor: colorList[index % colorList.length],
-                    borderWidth: 2,
-                    tension: 0.25,
-                    pointRadius: 3,
-                    fill: false
-                }};
-            }});
-
-            const ctx = document.getElementById("trendChart").getContext("2d");
-
-            new Chart(ctx, {{
-                type: "line",
-                data: {{
-                    labels: labels,
-                    datasets: datasets
+        new Chart(ctx, {{
+            type: 'bar',
+            data: {{
+                labels: labels,
+                datasets: [{{
+                    label: 'Mentions in Top YouTube Gaming Videos',
+                    data: values,
+                    borderWidth: 1
+                }}]
+            }},
+            options: {{
+                responsive: true,
+                plugins: {{
+                    legend: {{
+                        labels: {{
+                            color: '#e5e7eb'
+                        }}
+                    }}
                 }},
-                options: {{
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    plugins: {{
-                        legend: {{
-                            position: "top"
+                scales: {{
+                    x: {{
+                        ticks: {{
+                            color: '#e5e7eb'
                         }},
-                        tooltip: {{
-                            mode: "index",
-                            intersect: false
+                        grid: {{
+                            color: '#334155'
                         }}
                     }},
-                    interaction: {{
-                        mode: "nearest",
-                        axis: "x",
-                        intersect: false
-                    }},
-                    scales: {{
-                        x: {{
-                            title: {{
-                                display: true,
-                                text: "Pull Time"
-                            }}
+                    y: {{
+                        beginAtZero: true,
+                        ticks: {{
+                            color: '#e5e7eb',
+                            precision: 0
                         }},
-                        y: {{
-                            beginAtZero: true,
-                            title: {{
-                                display: true,
-                                text: "Appearances in Trending Videos"
-                            }},
-                            ticks: {{
-                                stepSize: 1
-                            }}
+                        grid: {{
+                            color: '#334155'
                         }}
                     }}
                 }}
-            }});
-        </script>
-    </body>
-    </html>
-    """
+            }}
+        }});
+    </script>
+</body>
+</html>
+"""
 
     with open("dashboard.html", "w", encoding="utf-8") as file:
         file.write(html)
@@ -542,5 +427,8 @@ def generate_dashboard():
     print("Dashboard updated successfully: dashboard.html")
 
 
+# =========================
+# MAIN
+# =========================
 if __name__ == "__main__":
     generate_dashboard()
