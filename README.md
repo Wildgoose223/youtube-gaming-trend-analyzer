@@ -32,6 +32,12 @@ This project combines:
 
 ---
 
+## Live Dashboard
+
+View the live dashboard here:
+
+https://wildgoose223.github.io/youtube-gaming-trend-analyzer/
+
 # Example Analytics Output
 
 ```text
