@@ -144,6 +144,8 @@ def generate_dashboard():
             <img class="game-image" src="{item["background_image"]}" alt="{item["display_name"]}">
             """
 
+        change_display = f"+{item['change']}" if item["change"] > 0 else item["change"]
+
         cards_html += f"""
         <div class="game-card">
             {image_html}
@@ -165,14 +167,19 @@ def generate_dashboard():
 
                     <div>
                         <span class="stat-value">{item["percentage"]}%</span>
-                        <span class="stat-label">Share</span>
+                        <span class="stat-label">% of Videos</span>
                     </div>
 
                     <div>
-                        <span class="stat-value">{item["change"]}</span>
-                        <span class="stat-label">Change</span>
+                        <span class="stat-value">{change_display}</span>
+                        <span class="stat-label">Change vs Last Run</span>
                     </div>
                 </div>
+
+                <p class="meaning">
+                    Appeared in <strong>{item["mentions"]}</strong> out of 
+                    <strong>{item["total_videos"]}</strong> trending YouTube Gaming videos.
+                </p>
 
                 <p class="trend {item["trend_label"].replace(" ", "-").lower()}">
                     {item["trend_label"]}
@@ -226,6 +233,20 @@ def generate_dashboard():
             max-width: 1200px;
             margin: 0 auto;
             padding: 32px;
+        }}
+
+        .summary-box {{
+            background: #111827;
+            border: 1px solid #334155;
+            border-radius: 16px;
+            padding: 20px;
+            margin-bottom: 32px;
+            color: #cbd5e1;
+            line-height: 1.6;
+        }}
+
+        .summary-box strong {{
+            color: #e5e7eb;
         }}
 
         .chart-section {{
@@ -305,12 +326,23 @@ def generate_dashboard():
             margin-top: 4px;
         }}
 
+        .meaning {{
+            background: #020617;
+            border: 1px solid #1e293b;
+            padding: 12px;
+            border-radius: 12px;
+            color: #cbd5e1;
+            font-size: 14px;
+            line-height: 1.5;
+        }}
+
         .trend {{
             display: inline-block;
             padding: 8px 12px;
             border-radius: 999px;
             font-weight: bold;
             font-size: 13px;
+            margin-top: 10px;
         }}
 
         .trending-up {{
@@ -356,6 +388,13 @@ def generate_dashboard():
     </header>
 
     <div class="container">
+        <section class="summary-box">
+            <strong>How to read this dashboard:</strong>
+            This dashboard looks at the latest YouTube Gaming trending sample.
+            The percentage means how often a game appeared in the trending video titles from that sample.
+            For example, 32% means the game appeared in 8 out of 25 trending videos.
+        </section>
+
         <section class="chart-section">
             <canvas id="trendChart"></canvas>
         </section>
@@ -380,7 +419,7 @@ def generate_dashboard():
             data: {{
                 labels: labels,
                 datasets: [{{
-                    label: 'Mentions in Top YouTube Gaming Videos',
+                    label: 'Mentions in Trending YouTube Gaming Videos',
                     data: values,
                     borderWidth: 1
                 }}]
@@ -421,10 +460,10 @@ def generate_dashboard():
 </html>
 """
 
-    with open("dashboard.html", "w", encoding="utf-8") as file:
+    with open("index.html", "w", encoding="utf-8") as file:
         file.write(html)
 
-    print("Dashboard updated successfully: dashboard.html")
+    print("Dashboard updated successfully: index.html")
 
 
 # =========================

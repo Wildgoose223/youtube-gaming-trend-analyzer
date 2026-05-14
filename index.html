@@ -37,6 +37,20 @@
             padding: 32px;
         }
 
+        .summary-box {
+            background: #111827;
+            border: 1px solid #334155;
+            border-radius: 16px;
+            padding: 20px;
+            margin-bottom: 32px;
+            color: #cbd5e1;
+            line-height: 1.6;
+        }
+
+        .summary-box strong {
+            color: #e5e7eb;
+        }
+
         .chart-section {
             background: #111827;
             padding: 24px;
@@ -114,12 +128,23 @@
             margin-top: 4px;
         }
 
+        .meaning {
+            background: #020617;
+            border: 1px solid #1e293b;
+            padding: 12px;
+            border-radius: 12px;
+            color: #cbd5e1;
+            font-size: 14px;
+            line-height: 1.5;
+        }
+
         .trend {
             display: inline-block;
             padding: 8px 12px;
             border-radius: 999px;
             font-weight: bold;
             font-size: 13px;
+            margin-top: 10px;
         }
 
         .trending-up {
@@ -161,10 +186,17 @@
     <header>
         <h1>Project2026 Gaming Trend Dashboard</h1>
         <p>Top 10 trending games from YouTube Gaming, enriched with RAWG metadata</p>
-        <p>Last updated: 2026-05-11 10:25:34</p>
+        <p>Last updated: 2026-05-13 20:45:48</p>
     </header>
 
     <div class="container">
+        <section class="summary-box">
+            <strong>How to read this dashboard:</strong>
+            This dashboard looks at the latest YouTube Gaming trending sample.
+            The percentage means how often a game appeared in the trending video titles from that sample.
+            For example, 32% means the game appeared in 8 out of 25 trending videos.
+        </section>
+
         <section class="chart-section">
             <canvas id="trendChart"></canvas>
         </section>
@@ -193,14 +225,19 @@
 
                     <div>
                         <span class="stat-value">16.00%</span>
-                        <span class="stat-label">Share</span>
+                        <span class="stat-label">% of Videos</span>
                     </div>
 
                     <div>
                         <span class="stat-value">0</span>
-                        <span class="stat-label">Change</span>
+                        <span class="stat-label">Change vs Last Run</span>
                     </div>
                 </div>
+
+                <p class="meaning">
+                    Appeared in <strong>4</strong> out of 
+                    <strong>25</strong> trending YouTube Gaming videos.
+                </p>
 
                 <p class="trend stable">
                     Stable
@@ -238,14 +275,19 @@
 
                     <div>
                         <span class="stat-value">8.00%</span>
-                        <span class="stat-label">Share</span>
+                        <span class="stat-label">% of Videos</span>
                     </div>
 
                     <div>
                         <span class="stat-value">0</span>
-                        <span class="stat-label">Change</span>
+                        <span class="stat-label">Change vs Last Run</span>
                     </div>
                 </div>
+
+                <p class="meaning">
+                    Appeared in <strong>2</strong> out of 
+                    <strong>25</strong> trending YouTube Gaming videos.
+                </p>
 
                 <p class="trend stable">
                     Stable
@@ -283,14 +325,19 @@
 
                     <div>
                         <span class="stat-value">4.00%</span>
-                        <span class="stat-label">Share</span>
+                        <span class="stat-label">% of Videos</span>
                     </div>
 
                     <div>
                         <span class="stat-value">0</span>
-                        <span class="stat-label">Change</span>
+                        <span class="stat-label">Change vs Last Run</span>
                     </div>
                 </div>
+
+                <p class="meaning">
+                    Appeared in <strong>1</strong> out of 
+                    <strong>25</strong> trending YouTube Gaming videos.
+                </p>
 
                 <p class="trend stable">
                     Stable
@@ -328,14 +375,19 @@
 
                     <div>
                         <span class="stat-value">4.00%</span>
-                        <span class="stat-label">Share</span>
+                        <span class="stat-label">% of Videos</span>
                     </div>
 
                     <div>
                         <span class="stat-value">0</span>
-                        <span class="stat-label">Change</span>
+                        <span class="stat-label">Change vs Last Run</span>
                     </div>
                 </div>
+
+                <p class="meaning">
+                    Appeared in <strong>1</strong> out of 
+                    <strong>25</strong> trending YouTube Gaming videos.
+                </p>
 
                 <p class="trend stable">
                     Stable
@@ -373,14 +425,19 @@
 
                     <div>
                         <span class="stat-value">4.00%</span>
-                        <span class="stat-label">Share</span>
+                        <span class="stat-label">% of Videos</span>
                     </div>
 
                     <div>
                         <span class="stat-value">0</span>
-                        <span class="stat-label">Change</span>
+                        <span class="stat-label">Change vs Last Run</span>
                     </div>
                 </div>
+
+                <p class="meaning">
+                    Appeared in <strong>1</strong> out of 
+                    <strong>25</strong> trending YouTube Gaming videos.
+                </p>
 
                 <p class="trend stable">
                     Stable
@@ -414,7 +471,7 @@
             data: {
                 labels: labels,
                 datasets: [{
-                    label: 'Mentions in Top YouTube Gaming Videos',
+                    label: 'Mentions in Trending YouTube Gaming Videos',
                     data: values,
                     borderWidth: 1
                 }]
