@@ -34,45 +34,68 @@ def fetch_dashboard_data():
     cursor = conn.cursor()
 
     cursor.execute("""
-        SELECT DISTINCT run_time
-        FROM trending_games
-        ORDER BY run_time DESC
-        LIMIT 2;
-    """)
-
-    runs = cursor.fetchall()
-
-    if not runs:
-        cursor.close()
-        conn.close()
-        return []
-
-    current_run = runs[0][0]
-    previous_run = runs[1][0] if len(runs) > 1 else None
-
-    cursor.execute("""
+        WITH current_runs AS (
+            SELECT
+                run_time,
+                MAX(total_videos) AS videos_in_pull
+            FROM trending_games
+            WHERE DATE(run_time) = CURRENT_DATE
+            GROUP BY run_time
+        ),
+        current_total AS (
+            SELECT
+                COALESCE(SUM(videos_in_pull), 0) AS total_videos_today,
+                COUNT(*) AS pulls_today
+            FROM current_runs
+        ),
+        current_games AS (
+            SELECT
+                game_name,
+                SUM(mentions) AS mentions_today,
+                MAX(rawg_name) AS rawg_name,
+                MAX(released) AS released,
+                MAX(rating) AS rating,
+                MAX(metacritic) AS metacritic,
+                MAX(platforms) AS platforms,
+                MAX(genres) AS genres,
+                MAX(background_image) AS background_image
+            FROM trending_games
+            WHERE DATE(run_time) = CURRENT_DATE
+            GROUP BY game_name
+        ),
+        previous_games AS (
+            SELECT
+                game_name,
+                SUM(mentions) AS mentions_yesterday
+            FROM trending_games
+            WHERE DATE(run_time) = CURRENT_DATE - INTERVAL '1 day'
+            GROUP BY game_name
+        )
         SELECT
-            current.game_name,
-            current.mentions,
-            current.total_videos,
-            current.percentage,
-            COALESCE(previous.mentions, 0) AS previous_mentions,
-            current.mentions - COALESCE(previous.mentions, 0) AS change,
-            current.rawg_name,
-            current.released,
-            current.rating,
-            current.metacritic,
-            current.platforms,
-            current.genres,
-            current.background_image
-        FROM trending_games current
-        LEFT JOIN trending_games previous
-            ON current.game_name = previous.game_name
-            AND previous.run_time = %s
-        WHERE current.run_time = %s
-        ORDER BY current.mentions DESC
+            current_games.game_name,
+            current_games.mentions_today,
+            current_total.total_videos_today,
+            ROUND(
+                (current_games.mentions_today::numeric / NULLIF(current_total.total_videos_today, 0)) * 100,
+                2
+            ) AS percentage_today,
+            COALESCE(previous_games.mentions_yesterday, 0) AS mentions_yesterday,
+            current_games.mentions_today - COALESCE(previous_games.mentions_yesterday, 0) AS change,
+            current_games.rawg_name,
+            current_games.released,
+            current_games.rating,
+            current_games.metacritic,
+            current_games.platforms,
+            current_games.genres,
+            current_games.background_image,
+            current_total.pulls_today
+        FROM current_games
+        CROSS JOIN current_total
+        LEFT JOIN previous_games
+            ON current_games.game_name = previous_games.game_name
+        ORDER BY current_games.mentions_today DESC
         LIMIT 10;
-    """, (previous_run, current_run))
+    """)
 
     rows = cursor.fetchall()
 
@@ -84,10 +107,10 @@ def fetch_dashboard_data():
     for row in rows:
         (
             game_name,
-            mentions,
-            total_videos,
-            percentage,
-            previous_mentions,
+            mentions_today,
+            total_videos_today,
+            percentage_today,
+            mentions_yesterday,
             change,
             rawg_name,
             released,
@@ -95,7 +118,8 @@ def fetch_dashboard_data():
             metacritic,
             platforms,
             genres,
-            background_image
+            background_image,
+            pulls_today
         ) = row
 
         if change > 0:
@@ -108,10 +132,10 @@ def fetch_dashboard_data():
         dashboard_data.append({
             "game_name": game_name,
             "display_name": rawg_name or game_name,
-            "mentions": mentions,
-            "total_videos": total_videos,
-            "percentage": percentage,
-            "previous_mentions": previous_mentions,
+            "mentions": mentions_today,
+            "total_videos": total_videos_today,
+            "percentage": percentage_today,
+            "mentions_yesterday": mentions_yesterday,
             "change": change,
             "trend_label": trend_label,
             "released": str(released) if released else "Unknown",
@@ -119,7 +143,8 @@ def fetch_dashboard_data():
             "metacritic": metacritic if metacritic is not None else "N/A",
             "platforms": platforms or "Unknown",
             "genres": genres or "Unknown",
-            "background_image": background_image or ""
+            "background_image": background_image or "",
+            "pulls_today": pulls_today
         })
 
     return dashboard_data
@@ -133,6 +158,9 @@ def generate_dashboard():
 
     chart_labels = [item["display_name"] for item in data]
     chart_values = [item["mentions"] for item in data]
+
+    pulls_today = data[0]["pulls_today"] if data else 0
+    total_videos_today = data[0]["total_videos"] if data else 0
 
     cards_html = ""
 
@@ -162,23 +190,23 @@ def generate_dashboard():
                 <div class="stats">
                     <div>
                         <span class="stat-value">{item["mentions"]}</span>
-                        <span class="stat-label">Mentions</span>
+                        <span class="stat-label">Mentions Today</span>
                     </div>
 
                     <div>
                         <span class="stat-value">{item["percentage"]}%</span>
-                        <span class="stat-label">% of Videos</span>
+                        <span class="stat-label">% of Today's Videos</span>
                     </div>
 
                     <div>
                         <span class="stat-value">{change_display}</span>
-                        <span class="stat-label">Change vs Last Run</span>
+                        <span class="stat-label">Vs Yesterday</span>
                     </div>
                 </div>
 
                 <p class="meaning">
-                    Appeared in <strong>{item["mentions"]}</strong> out of 
-                    <strong>{item["total_videos"]}</strong> trending YouTube Gaming videos.
+                    Appeared in <strong>{item["mentions"]}</strong> matched trending videos today,
+                    across <strong>{item["total_videos"]}</strong> total YouTube Gaming videos checked.
                 </p>
 
                 <p class="trend {item["trend_label"].replace(" ", "-").lower()}">
@@ -245,8 +273,30 @@ def generate_dashboard():
             line-height: 1.6;
         }}
 
-        .summary-box strong {{
-            color: #e5e7eb;
+        .summary-grid {{
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 16px;
+            margin-top: 18px;
+        }}
+
+        .summary-stat {{
+            background: #020617;
+            border: 1px solid #1e293b;
+            border-radius: 12px;
+            padding: 16px;
+            text-align: center;
+        }}
+
+        .summary-stat span {{
+            display: block;
+            font-size: 28px;
+            font-weight: bold;
+            color: #38bdf8;
+        }}
+
+        .summary-stat small {{
+            color: #94a3b8;
         }}
 
         .chart-section {{
@@ -383,16 +433,32 @@ def generate_dashboard():
 <body>
     <header>
         <h1>Project2026 Gaming Trend Dashboard</h1>
-        <p>Top 10 trending games from YouTube Gaming, enriched with RAWG metadata</p>
+        <p>Daily gaming trend summary from YouTube Gaming, enriched with RAWG metadata</p>
         <p>Last updated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}</p>
     </header>
 
     <div class="container">
         <section class="summary-box">
             <strong>How to read this dashboard:</strong>
-            This dashboard looks at the latest YouTube Gaming trending sample.
-            The percentage means how often a game appeared in the trending video titles from that sample.
-            For example, 32% means the game appeared in 8 out of 25 trending videos.
+            This dashboard now summarizes the whole day instead of only showing the latest pull.
+            If the script runs multiple times today, the dashboard combines those pulls into one daily trend view.
+
+            <div class="summary-grid">
+                <div class="summary-stat">
+                    <span>{pulls_today}</span>
+                    <small>Pulls Today</small>
+                </div>
+
+                <div class="summary-stat">
+                    <span>{total_videos_today}</span>
+                    <small>Total Videos Checked Today</small>
+                </div>
+
+                <div class="summary-stat">
+                    <span>{len(data)}</span>
+                    <small>Top Games Displayed</small>
+                </div>
+            </div>
         </section>
 
         <section class="chart-section">
@@ -419,7 +485,7 @@ def generate_dashboard():
             data: {{
                 labels: labels,
                 datasets: [{{
-                    label: 'Mentions in Trending YouTube Gaming Videos',
+                    label: 'Total Mentions Today',
                     data: values,
                     borderWidth: 1
                 }}]
@@ -463,7 +529,7 @@ def generate_dashboard():
     with open("index.html", "w", encoding="utf-8") as file:
         file.write(html)
 
-    print("Dashboard updated successfully: index.html")
+    print("Daily dashboard updated successfully: index.html")
 
 
 # =========================
